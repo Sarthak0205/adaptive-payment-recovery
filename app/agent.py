@@ -269,7 +269,14 @@ Provide the final analysis using the required format.
 
     print(final_answer)
 
-    return final_answer
+    return {
+        "payment": payment,
+        "customer_history": customer_history,
+        "failure_analysis": failure_analysis,
+        "ml_predictions": predictions,
+        "decision_engine": decision,
+        "analysis": final_answer
+    }
 
 
 if __name__ == "__main__":

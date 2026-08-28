@@ -2,6 +2,10 @@ import joblib
 import pandas as pd
 
 
+# ============================================================
+# Configuration
+# ============================================================
+
 MODEL_PATH = "models/recovery_model.pkl"
 
 ACTIONS = [
@@ -13,190 +17,286 @@ ACTIONS = [
 ]
 
 ACTION_COSTS = {
-    "retry_now": 5.00,
-    "retry_later": 5.00,
-    "payment_link": 1.00,
-    "change_payment_method": 2.00,
-    "no_action": 0.00
+    "retry_now": 2.0,
+    "retry_later": 5.0,
+    "payment_link": 1.0,
+    "change_payment_method": 3.0,
+    "no_action": 0.0
 }
 
-# Prototype business policy.
-# This is NOT a real Razorpay threshold.
-MIN_RECOVERY_PROBABILITY = 0.40
+MIN_RECOVERY_PROBABILITY = 0.30
 
 
-# --------------------------------------------------
-# Load trained model
-# --------------------------------------------------
+# ============================================================
+# Load model
+# ============================================================
 
 model = joblib.load(MODEL_PATH)
 
 
-# --------------------------------------------------
-# Policy / Guardrails
-# --------------------------------------------------
+# ============================================================
+# Guardrails
+# ============================================================
 
 def apply_guardrails(payment, results):
+    """
+    Mark retry actions as ineligible when decision-engine
+    guardrails are triggered.
 
-    failure_reason = payment["failure_reason"]
-    attempt_number = payment["attempt_number"]
+    The original ML probabilities are preserved.
+    """
 
-    # Blocked cards should not be automatically retried.
-    if failure_reason == "blocked_card":
+    results = results.copy()
 
-        results = results[
-            ~results["action"].isin([
-                "retry_now",
-                "retry_later"
-            ])
-        ]
+    results["eligible"] = True
 
-    # Stop repeated automatic retries.
-    if attempt_number >= 3:
+    # --------------------------------------------------------
+    # Guardrail 1:
+    # Block retry actions after 3 attempts
+    # --------------------------------------------------------
 
-        results = results[
-            ~results["action"].isin([
-                "retry_now",
-                "retry_later"
-            ])
-        ]
+    if payment["attempt_number"] >= 3:
+
+        results.loc[
+            results["action"].isin(
+                ["retry_now", "retry_later"]
+            ),
+            "eligible"
+        ] = False
+
+    # --------------------------------------------------------
+    # Guardrail 2:
+    # Block retry actions for blocked cards
+    # --------------------------------------------------------
+
+    if payment["failure_reason"] == "blocked_card":
+
+        results.loc[
+            results["action"].isin(
+                ["retry_now", "retry_later"]
+            ),
+            "eligible"
+        ] = False
 
     return results
 
 
-# --------------------------------------------------
-# Evaluate recovery actions
-# --------------------------------------------------
+# ============================================================
+# Evaluate actions
+# ============================================================
 
 def evaluate_actions(payment):
+    """
+    Evaluate all possible recovery actions.
+
+    Returns:
+        DataFrame containing:
+        - raw ML probability
+        - baseline probability
+        - incremental recovery
+        - incremental expected value
+        - eligibility
+        - guardrail evidence
+    """
 
     results = []
+
+    # --------------------------------------------------------
+    # Generate prediction for every action
+    # --------------------------------------------------------
 
     for action in ACTIONS:
 
         candidate = payment.copy()
 
+        # IMPORTANT:
+        # The trained model expects this feature.
         candidate["recovery_action"] = action
 
         candidate_df = pd.DataFrame([candidate])
 
-        probability = model.predict_proba(candidate_df)[0][1]
-
-        action_cost = ACTION_COSTS[action]
+        probability = model.predict_proba(
+            candidate_df
+        )[0][1]
 
         results.append({
             "action": action,
-            "recovery_probability": probability,
-            "action_cost": action_cost
+            "recovery_probability": float(probability),
+            "action_cost": float(
+                ACTION_COSTS[action]
+            )
         })
 
     results = pd.DataFrame(results)
 
-    # ----------------------------------------------
-    # Baseline = probability of recovering naturally
-    # ----------------------------------------------
+    # --------------------------------------------------------
+    # Baseline = no_action probability
+    # --------------------------------------------------------
 
-    baseline_row = results[
+    baseline_rows = results[
         results["action"] == "no_action"
-    ].iloc[0]
+    ]
 
-    baseline_probability = (
-        baseline_row["recovery_probability"]
+    if baseline_rows.empty:
+        raise RuntimeError(
+            "Decision engine requires a no_action baseline."
+        )
+
+    baseline_probability = float(
+        baseline_rows.iloc[0]["recovery_probability"]
     )
 
-    # ----------------------------------------------
-    # Calculate incremental recovery and value
-    # ----------------------------------------------
+    # --------------------------------------------------------
+    # Incremental recovery
+    # --------------------------------------------------------
 
     results["incremental_recovery"] = (
         results["recovery_probability"]
         - baseline_probability
     )
 
+    # --------------------------------------------------------
+    # Incremental expected value
+    # --------------------------------------------------------
+
     results["incremental_expected_value"] = (
         results["incremental_recovery"]
-        * payment["amount"]
+        * float(payment["amount"])
         - results["action_cost"]
     )
 
-    # No action is the baseline, so its incremental
-    # value is explicitly zero.
+    # No action is the baseline.
+    results.loc[
+        results["action"] == "no_action",
+        "incremental_recovery"
+    ] = 0.0
+
     results.loc[
         results["action"] == "no_action",
         "incremental_expected_value"
     ] = 0.0
 
-    # ----------------------------------------------
+    # --------------------------------------------------------
     # Apply guardrails
-    # ----------------------------------------------
+    # --------------------------------------------------------
 
     results = apply_guardrails(
         payment,
         results
     )
 
-    # ----------------------------------------------
-    # Remove actions below confidence threshold
-    # ----------------------------------------------
+    # --------------------------------------------------------
+    # Decision evidence
+    # --------------------------------------------------------
+
+    guardrails = []
+
+    if payment["failure_reason"] == "blocked_card":
+
+        guardrails.append(
+            "retry actions blocked because "
+            "failure_reason is blocked_card"
+        )
+
+    if payment["attempt_number"] >= 3:
+
+        guardrails.append(
+            "retry actions blocked because "
+            f"attempt_number is "
+            f"{payment['attempt_number']} (>= 3)"
+        )
+
+    # --------------------------------------------------------
+    # Eligible intervention actions
+    # --------------------------------------------------------
 
     intervention_results = results[
         results["action"] != "no_action"
-    ]
+    ].copy()
 
+    # Apply confidence threshold
     intervention_results = intervention_results[
         intervention_results["recovery_probability"]
         >= MIN_RECOVERY_PROBABILITY
     ]
 
-    # ----------------------------------------------
-    # If no intervention qualifies → no action
-    # ----------------------------------------------
+    # Apply guardrails
+    intervention_results = intervention_results[
+        intervention_results["eligible"]
+    ]
+
+    # --------------------------------------------------------
+    # No eligible intervention
+    # --------------------------------------------------------
 
     if intervention_results.empty:
 
-        return results[
+        best = results[
             results["action"] == "no_action"
-        ].reset_index(drop=True)
+        ].iloc[0].copy()
 
-    # ----------------------------------------------
-    # Choose highest incremental value
-    # ----------------------------------------------
+        best["baseline_probability"] = (
+            baseline_probability
+        )
+
+        best["decision_guardrails"] = guardrails
+
+        best["action_cost"] = 0.0
+
+        return pd.DataFrame(
+            [best]
+        )
+
+    # --------------------------------------------------------
+    # Select action by incremental expected value
+    # --------------------------------------------------------
 
     best = intervention_results.sort_values(
         "incremental_expected_value",
         ascending=False
-    ).iloc[0]
+    ).iloc[0].copy()
 
-    # ----------------------------------------------
-    # Decision evidence
-    # ----------------------------------------------
+    # --------------------------------------------------------
+    # Attach decision evidence
+    # --------------------------------------------------------
 
-    guardrails = []
-
-    if payment["failure_reason"] == "blocked_card":
-        guardrails.append(
-            "retry actions blocked because failure_reason is blocked_card"
-        )
-
-    if payment["attempt_number"] >= 3:
-        guardrails.append(
-            f"retry actions blocked because attempt_number is "
-            f"{payment['attempt_number']} (>= 3)"
-        )
-
-    best["baseline_probability"] = baseline_probability
-    best["decision_guardrails"] = guardrails
-    best["action_cost"] = ACTION_COSTS[best["action"]]
-
-    return pd.concat(
-        [
-            pd.DataFrame([best]),
-            results[
-                results["action"] == "no_action"
-            ]
-        ],
-        ignore_index=True
+    best["baseline_probability"] = (
+        baseline_probability
     )
+
+    best["decision_guardrails"] = guardrails
+
+    best["action_cost"] = float(
+        ACTION_COSTS[best["action"]]
+    )
+
+    # --------------------------------------------------------
+    # Return recommendation + baseline
+    # --------------------------------------------------------
+
+    no_action = results[
+        results["action"] == "no_action"
+    ].iloc[0].copy()
+
+    no_action["baseline_probability"] = (
+        baseline_probability
+    )
+
+    no_action["decision_guardrails"] = guardrails
+
+    no_action["action_cost"] = 0.0
+
+    return pd.DataFrame(
+        [
+            best,
+            no_action
+        ]
+    ).reset_index(drop=True)
+
+
+# ============================================================
+# Decision explanation
+# ============================================================
 
 def get_decision_explanation(payment):
 
@@ -205,49 +305,59 @@ def get_decision_explanation(payment):
     best = results.iloc[0]
 
     explanation = {
-        "recommended_action": best["action"],
+        "recommended_action": str(
+            best["action"]
+        ),
+
         "recovery_probability": round(
             float(best["recovery_probability"]),
             4
         ),
+
         "incremental_recovery": round(
             float(best["incremental_recovery"]),
             4
         ),
+
         "incremental_expected_value": round(
             float(best["incremental_expected_value"]),
             2
         ),
+
+        "baseline_probability": round(
+            float(best["baseline_probability"]),
+            4
+        ),
+
         "attempt_number": int(
             payment["attempt_number"]
         ),
-        "failure_reason": payment["failure_reason"]
+
+        "failure_reason": str(
+            payment["failure_reason"]
+        ),
+
+        "action_cost": round(
+            float(best["action_cost"]),
+            2
+        ),
+
+        "decision_guardrails": (
+            best["decision_guardrails"]
+            if isinstance(
+                best["decision_guardrails"],
+                list
+            )
+            else []
+        )
     }
 
-    if payment["attempt_number"] >= 3:
-
-        explanation["guardrail"] = (
-            "Automatic retry actions are blocked because "
-            "the payment attempt number is 3 or higher."
-        )
-
-    elif payment["failure_reason"] == "blocked_card":
-
-        explanation["guardrail"] = (
-            "Automatic retry actions are blocked because "
-            "the payment failure reason is blocked_card."
-        )
-
-    else:
-
-        explanation["guardrail"] = (
-            "No retry guardrail was triggered."
-        )
-
     return explanation
-# --------------------------------------------------
-# Example / manual test
-# --------------------------------------------------
+
+
+# ============================================================
+# Manual test
+# ============================================================
 
 if __name__ == "__main__":
 
@@ -266,7 +376,15 @@ if __name__ == "__main__":
 
     results = evaluate_actions(payment)
 
-    print("\n========== ACTION EVALUATION ==========\n")
+    print(
+        "\n========================================"
+    )
+    print(
+        "          ACTION EVALUATION"
+    )
+    print(
+        "========================================\n"
+    )
 
     for _, row in results.iterrows():
 
@@ -284,7 +402,15 @@ if __name__ == "__main__":
 
     best_action = results.iloc[0]
 
-    print("\n========== RECOMMENDATION ==========\n")
+    print(
+        "\n========================================"
+    )
+    print(
+        "          RECOMMENDATION"
+    )
+    print(
+        "========================================\n"
+    )
 
     print(
         f"Recommended action: "
@@ -304,4 +430,14 @@ if __name__ == "__main__":
     print(
         f"Incremental expected value: "
         f"₹{best_action['incremental_expected_value']:,.2f}"
+    )
+
+    print(
+        f"Baseline probability: "
+        f"{best_action['baseline_probability'] * 100:.2f}%"
+    )
+
+    print(
+        f"Guardrails: "
+        f"{best_action['decision_guardrails']}"
     )
