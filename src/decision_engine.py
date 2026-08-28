@@ -167,6 +167,27 @@ def evaluate_actions(payment):
         ascending=False
     ).iloc[0]
 
+    # ----------------------------------------------
+    # Decision evidence
+    # ----------------------------------------------
+
+    guardrails = []
+
+    if payment["failure_reason"] == "blocked_card":
+        guardrails.append(
+            "retry actions blocked because failure_reason is blocked_card"
+        )
+
+    if payment["attempt_number"] >= 3:
+        guardrails.append(
+            f"retry actions blocked because attempt_number is "
+            f"{payment['attempt_number']} (>= 3)"
+        )
+
+    best["baseline_probability"] = baseline_probability
+    best["decision_guardrails"] = guardrails
+    best["action_cost"] = ACTION_COSTS[best["action"]]
+
     return pd.concat(
         [
             pd.DataFrame([best]),
@@ -177,70 +198,110 @@ def evaluate_actions(payment):
         ignore_index=True
     )
 
+def get_decision_explanation(payment):
 
+    results = evaluate_actions(payment)
+
+    best = results.iloc[0]
+
+    explanation = {
+        "recommended_action": best["action"],
+        "recovery_probability": round(
+            float(best["recovery_probability"]),
+            4
+        ),
+        "incremental_recovery": round(
+            float(best["incremental_recovery"]),
+            4
+        ),
+        "incremental_expected_value": round(
+            float(best["incremental_expected_value"]),
+            2
+        ),
+        "attempt_number": int(
+            payment["attempt_number"]
+        ),
+        "failure_reason": payment["failure_reason"]
+    }
+
+    if payment["attempt_number"] >= 3:
+
+        explanation["guardrail"] = (
+            "Automatic retry actions are blocked because "
+            "the payment attempt number is 3 or higher."
+        )
+
+    elif payment["failure_reason"] == "blocked_card":
+
+        explanation["guardrail"] = (
+            "Automatic retry actions are blocked because "
+            "the payment failure reason is blocked_card."
+        )
+
+    else:
+
+        explanation["guardrail"] = (
+            "No retry guardrail was triggered."
+        )
+
+    return explanation
 # --------------------------------------------------
-# Example payment
+# Example / manual test
 # --------------------------------------------------
 
-payment = {
-    "amount": 500,
-    "payment_method": "Card",
-    "failure_reason": "blocked_card",
-    "bank": "HDFC",
-    "previous_successes": 0,
-    "previous_failures": 5,
-    "attempt_number": 4,
-    "customer_age_days": 10,
-    "hour": 3,
-    "day_of_week": 2
-}
+if __name__ == "__main__":
 
+    payment = {
+        "amount": 500,
+        "payment_method": "Card",
+        "failure_reason": "blocked_card",
+        "bank": "HDFC",
+        "previous_successes": 0,
+        "previous_failures": 5,
+        "attempt_number": 4,
+        "customer_age_days": 10,
+        "hour": 3,
+        "day_of_week": 2
+    }
 
-# --------------------------------------------------
-# Run decision engine
-# --------------------------------------------------
+    results = evaluate_actions(payment)
 
-results = evaluate_actions(payment)
+    print("\n========== ACTION EVALUATION ==========\n")
 
+    for _, row in results.iterrows():
 
-print("\n========== ACTION EVALUATION ==========\n")
+        print(
+            f"{row['action']:25s} "
+            f"Recovery: "
+            f"{row['recovery_probability'] * 100:6.2f}% | "
+            f"Incremental: "
+            f"{row['incremental_recovery'] * 100:6.2f}% | "
+            f"Cost: "
+            f"₹{row['action_cost']:6.2f} | "
+            f"Incremental Value: "
+            f"₹{row['incremental_expected_value']:,.2f}"
+        )
 
-for _, row in results.iterrows():
+    best_action = results.iloc[0]
+
+    print("\n========== RECOMMENDATION ==========\n")
 
     print(
-        f"{row['action']:25s} "
-        f"Recovery: "
-        f"{row['recovery_probability'] * 100:6.2f}% | "
-        f"Incremental: "
-        f"{row['incremental_recovery'] * 100:6.2f}% | "
-        f"Cost: "
-        f"₹{row['action_cost']:6.2f} | "
-        f"Incremental Value: "
-        f"₹{row['incremental_expected_value']:,.2f}"
+        f"Recommended action: "
+        f"{best_action['action']}"
     )
 
+    print(
+        f"Recovery probability: "
+        f"{best_action['recovery_probability'] * 100:.2f}%"
+    )
 
-best_action = results.iloc[0]
+    print(
+        f"Incremental recovery: "
+        f"{best_action['incremental_recovery'] * 100:.2f}%"
+    )
 
-
-print("\n========== RECOMMENDATION ==========\n")
-
-print(
-    f"Recommended action: "
-    f"{best_action['action']}"
-)
-
-print(
-    f"Recovery probability: "
-    f"{best_action['recovery_probability'] * 100:.2f}%"
-)
-
-print(
-    f"Incremental recovery: "
-    f"{best_action['incremental_recovery'] * 100:.2f}%"
-)
-
-print(
-    f"Incremental expected value: "
-    f"₹{best_action['incremental_expected_value']:,.2f}"
-)
+    print(
+        f"Incremental expected value: "
+        f"₹{best_action['incremental_expected_value']:,.2f}"
+    )
