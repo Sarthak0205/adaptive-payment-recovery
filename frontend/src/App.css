@@ -224,7 +224,7 @@
   border: 1px solid #272c36;
   background: #10131a;
   border-radius: 16px;
-  padding: 24px;
+  padding: 22px 24px;
   margin-bottom: 18px;
 }
 
@@ -380,7 +380,7 @@
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 14px;
-  margin-top: 30px;
+  margin-top: 24px;
 }
 
 .metric {
@@ -398,7 +398,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 22px;
-  margin-top: 30px;
+  margin-top: 24px;
 }
 
 .guardrail-card {
@@ -429,18 +429,91 @@
   margin-top: 1px;
 }
 
-.analysis-card pre {
-  white-space: pre-wrap;
-  font-family: inherit;
-  color: #aab2bf;
-  line-height: 1.75;
+.analysis-card {
+  overflow: hidden;
+}
+
+.analysis-card .section-description {
+  max-width: 680px;
+}
+
+.decision-factors {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.factor {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid #272c36;
+  border-radius: 10px;
+  background: #0b0e14;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.factor span {
+  color: #737c8b;
+  font-size: 11px;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.factor strong {
+  color: #e9edf3;
+  font-size: 16px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.factor em {
+  color: #8f98a8;
+  font-size: 12px;
+  font-style: normal;
+}
+
+
+.ai-reasoning {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #252b33;
+}
+
+.ai-reasoning-header {
+  color: #737c8b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ai-reasoning-text {
+  margin: 14px 0 0;
+  max-width: 1050px;
+  color: #aeb6c3;
   font-size: 14px;
-  margin: 26px 0 0;
+  line-height: 1.75;
+}
+
+
+.section-description {
+  margin: 7px 0 0;
+  color: #737c8b;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 @media (max-width: 800px) {
   .topbar {
     padding: 0 20px;
+  }
+
+  .decision-factors {
+    grid-template-columns: 1fr 1fr;
   }
 
   .dashboard {
@@ -466,6 +539,16 @@
   }
 
   .history-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .demo-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .decision-factors {
     grid-template-columns: 1fr;
   }
 }

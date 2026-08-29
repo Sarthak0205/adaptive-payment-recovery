@@ -63,9 +63,9 @@ function App() {
   const decision = data?.decision;
   const analysis = data?.analysis;
 
-  const recommendedAction = decision?.recommended_action
-    ?.replaceAll("_", " ")
-    .toUpperCase();
+  const recommendedAction = formatLabel(
+    decision?.recommended_action
+  ).toUpperCase();
   const demoPayments = [
     {
       id: "PAY_000001",
@@ -240,7 +240,7 @@ function App() {
                 <div className="detail-grid">
                   <Detail
                     label="Payment Method"
-                    value={payment.payment_method}
+                    value={formatLabel(payment.payment_method)}
                   />
                   <Detail
                     label="Bank"
@@ -248,7 +248,7 @@ function App() {
                   />
                   <Detail
                     label="Failure"
-                    value={payment.failure_reason}
+                    value={formatLabel(payment.failure_reason)}
                   />
                   <Detail
                     label="Attempt"
@@ -315,6 +315,9 @@ function App() {
                 <div>
                   <p className="card-eyebrow">MACHINE LEARNING</p>
                   <h2>Recovery Predictions</h2>
+                  <p className="section-description">
+                    Predicted recovery probability for each candidate action
+                  </p>
                 </div>
 
                 <Brain size={24} />
@@ -339,7 +342,7 @@ function App() {
                     >
                       <div className="prediction-top">
                         <span>
-                          {item.action.replaceAll("_", " ")}
+                          {formatLabel(item.action)}
                         </span>
 
                         <strong>
@@ -405,11 +408,11 @@ function App() {
                 <div className="failure-list">
                   <Detail
                     label="Failure Reason"
-                    value={data.failure_analysis.failure_reason}
+                    value={formatLabel(data.failure_analysis.failure_reason)}
                   />
                   <Detail
                     label="Payment Method"
-                    value={data.failure_analysis.payment_method}
+                    value={formatLabel(data.failure_analysis.payment_method)}
                   />
                   <Detail
                     label="Bank"
@@ -441,7 +444,7 @@ function App() {
                       key={guardrail}
                     >
                       <AlertTriangle size={18} />
-                      <span>{guardrail}</span>
+                      <span>{formatGuardrail(guardrail)}</span>
                     </div>
                   )
                 )}
@@ -451,14 +454,79 @@ function App() {
             <section className="card analysis-card">
               <div className="section-heading">
                 <div>
-                  <p className="card-eyebrow">AI EXPLANATION</p>
-                  <h2>Decision Analysis</h2>
+                  <p className="card-eyebrow">DECISION EXPLANATION</p>
+                  <h2>Why This Action?</h2>
+                  <p className="section-description">
+                    How the decision engine combined ML predictions, guardrails, and recovery value.
+                  </p>
                 </div>
 
                 <TrendingUp size={24} />
               </div>
 
-              <pre>{analysis}</pre>
+              <div className="decision-factors">
+                <div className="factor">
+                  <span>Highest ML Prediction</span>
+                  <strong>
+                    {formatLabel(
+                      predictions.reduce(
+                        (highest, current) =>
+                          current.recovery_probability > highest.recovery_probability
+                            ? current
+                            : highest,
+                        predictions[0] || { recovery_probability: 0, action: "" }
+                      ).action
+                    )}
+                  </strong>
+                  <em>
+                    {formatPercent(
+                      predictions.reduce(
+                        (highest, current) =>
+                          current.recovery_probability > highest.recovery_probability
+                            ? current
+                            : highest,
+                        predictions[0] || { recovery_probability: 0 }
+                      ).recovery_probability
+                    )}
+                  </em>
+                </div>
+
+                <div className="factor">
+                  <span>Selected Action</span>
+                  <strong>{formatLabel(decision?.recommended_action)}</strong>
+                  <em>{formatPercent(decision?.recovery_probability)}</em>
+                </div>
+
+                <div className="factor">
+                  <span>Incremental Recovery</span>
+                  <strong>{formatPercent(decision?.incremental_recovery)}</strong>
+                </div>
+
+                <div className="factor">
+                  <span>Incremental Expected Value</span>
+                  <strong>
+                    ₹{Number(decision?.incremental_expected_value || 0).toFixed(2)}
+                  </strong>
+                </div>
+
+                <div className="factor">
+                  <span>Action Cost</span>
+                  <strong>
+                    ₹{Number(decision?.action_cost || 0).toFixed(2)}
+                  </strong>
+                </div>
+              </div>
+
+
+              <div className="ai-reasoning">
+                <div className="ai-reasoning-header">
+                  <span>AI Reasoning</span>
+                </div>
+
+                <p className="ai-reasoning-text">
+                  {extractReason(analysis)}
+                </p>
+              </div>
             </section>
           </>
         )}
@@ -483,6 +551,42 @@ function Metric({ label, value }) {
       <span>{label}</span>
     </div>
   );
+}
+
+function formatLabel(value) {
+  if (!value) return "";
+
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatGuardrail(message) {
+  if (!message) return "";
+
+  const attemptMatch = message.match(
+    /attempt_number is (\d+)/
+  );
+
+  if (message.includes("retry actions blocked") && attemptMatch) {
+    return `Retry actions blocked — payment has reached the retry threshold (attempt ${attemptMatch[1]}).`;
+  }
+
+  return formatLabel(message);
+}
+
+function extractReason(analysis) {
+  if (!analysis) return "";
+
+  const marker = "Reason:";
+
+  const index = analysis.indexOf(marker);
+
+  if (index === -1) {
+    return analysis;
+  }
+
+  return analysis.slice(index + marker.length).trim();
 }
 
 function formatPercent(value) {
