@@ -29,7 +29,53 @@ Best Eligible Action
       ↓
 AI Explanation
 ````
+#Architecture
 
+                         FAILED PAYMENT
+                              │
+                              ▼
+                 ┌─────────────────────────┐
+                 │ Payment + Customer Data │
+                 └────────────┬────────────┘
+                              │
+                              ▼
+                 ┌─────────────────────────┐
+                 │    ML Recovery Model    │
+                 │   Logistic Regression   │
+                 └────────────┬────────────┘
+                              │
+                              ▼
+                 ┌─────────────────────────┐
+                 │  Recovery Probabilities │
+                 │  5 candidate actions    │
+                 └────────────┬────────────┘
+                              │
+                              ▼
+                 ┌─────────────────────────┐
+                 │   Business Guardrails   │
+                 │ Retry limits / blockers │
+                 └────────────┬────────────┘
+                              │
+                              ▼
+                 ┌─────────────────────────┐
+                 │ Expected-Value Engine   │
+                 │ Recovery − cost         │
+                 └────────────┬────────────┘
+                              │
+                              ▼
+                    ┌──────────────────┐
+                    │  FINAL DECISION  │
+                    └────────┬─────────┘
+                             │
+                             ▼
+                 ┌─────────────────────────┐
+                 │     Qwen3 4B / Ollama   │
+                 │    Explanation Layer    │
+                 └────────────┬────────────┘
+                              │
+                              ▼
+                       HUMAN-READABLE
+                         EXPLANATION
 ---
 
 ## How It Works
