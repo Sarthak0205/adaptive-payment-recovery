@@ -29,7 +29,7 @@ Best Eligible Action
       ↓
 AI Explanation
 ````
-#Architecture
+Architecture :
 
                          FAILED PAYMENT
                               │
