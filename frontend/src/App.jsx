@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import "./App.css";
 
-const API_URL = "/api";
+const API_URL = import.meta.env.VITE_API_URL || "/api";
 
 function App() {
   const [paymentId, setPaymentId] = useState("PAY_000001");
