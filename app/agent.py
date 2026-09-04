@@ -247,21 +247,90 @@ EVIDENCE:
 Provide the final analysis using the required format.
 """
 
-    response = chat(
-        model=MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": user_prompt
-            }
-        ]
-    )
+    try:
+        response = chat(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ]
+        )
 
-    final_answer = response["message"]["content"]
+        final_answer = response["message"]["content"]
+
+    except Exception:
+        highest_prediction = max(
+            predictions,
+            key=lambda item: item["recovery_probability"]
+        )
+
+        guardrail_text = (
+            "The following guardrails were applied: "
+            + "; ".join(decision["decision_guardrails"])
+            + ". "
+            if decision["decision_guardrails"]
+            else ""
+        )
+
+        final_answer = (
+            f"Failure:\n"
+            f"{failure_analysis['failure_reason']}\n\n"
+
+            f"Customer:\n"
+            f"previous_successes: "
+            f"{customer_history['previous_successes']}, "
+            f"previous_failures: "
+            f"{customer_history['previous_failures']}, "
+            f"customer_age_days: "
+            f"{customer_history['customer_age_days']}\n\n"
+
+            f"ML predictions:\n"
+            + "\n".join(
+                f"{item['action']}: "
+                f"{item['recovery_probability'] * 100:.2f}%"
+                for item in predictions
+            )
+            + "\n\n"
+
+            f"Decision:\n"
+            f"{decision['recommended_action']}\n\n"
+
+            f"Recovery probability:\n"
+            f"{decision['recovery_probability'] * 100:.2f}%\n\n"
+
+            f"Incremental recovery:\n"
+            f"{decision['incremental_recovery'] * 100:.2f}%\n\n"
+
+            f"Incremental expected value:\n"
+            f"₹{decision['incremental_expected_value']:.2f}\n\n"
+
+            f"Reason:\n"
+            f"The highest raw ML recovery probability is "
+            f"{highest_prediction['recovery_probability'] * 100:.2f}% "
+            f"for \"{highest_prediction['action']}\". "
+
+            f"The decision engine recommends "
+            f"\"{decision['recommended_action']}\". "
+
+            f"{guardrail_text}"
+
+            f"The baseline recovery probability is "
+            f"{decision['baseline_probability'] * 100:.2f}%. "
+
+            f"The incremental recovery is "
+            f"{decision['incremental_recovery'] * 100:.2f}% "
+            f"and the incremental expected value is "
+            f"₹{decision['incremental_expected_value']:.2f}. "
+
+            f"The action cost is "
+            f"₹{decision['action_cost']:.2f}."
+        )
 
     print("\n========================================")
     print("          FINAL ANALYSIS")
