@@ -1,232 +1,229 @@
 # Adaptive Payment Recovery
 
-An AI-powered payment recovery decision engine that combines machine learning predictions, deterministic business guardrails, and expected-value optimization to select the best recovery action for a failed payment.
+An AI-powered payment recovery decision engine that predicts recovery probability for each candidate action, applies deterministic guardrails, and selects the eligible action with the highest incremental expected value.
 
-The system evaluates five possible actions:
+**Core principle:** ML predicts -> Guardrails constrain -> Economics decides -> AI explains.
 
-- Retry Now
-- Retry Later
-- Payment Link
-- Change Payment Method
-- No Action
+---
 
-The key idea is that the system does **not** simply choose the action with the highest ML probability.
+## Live Demo and Repository
+- Frontend: https://adaptive-payment-recovery-1.onrender.com
+- GitHub: https://github.com/Sarthak0205/adaptive-payment-recovery
 
-Instead:
+Verified demo cases:
+- PAY_000001 -> Payment Link
+- PAY_000002 -> Retry Later
+- PAY_000008 -> Payment Link
+- PAY_000016 -> No Action
+---
 
-```text
-Failed Payment
-      ↓
-Payment + Customer Context
-      ↓
-ML Recovery Predictions
-      ↓
-Business Guardrails
-      ↓
-Incremental Recovery + Expected Value
-      ↓
-Best Eligible Action
-      ↓
-AI Explanation
-````
+## Problem
+
+Failed payments need more than a raw probability score. A recovery action can be likely to work but still be a poor choice if it is blocked by business rules or creates low economic value.
+
+This project addresses that gap by separating prediction from decisioning.
+
+---
+
+## Solution
+
+The system evaluates five candidate actions:
+
+1. Retry Now
+2. Retry Later
+3. Payment Link
+4. Change Payment Method
+5. No Action
+
+The workflow is:
+
+1. Load the payment row and customer context.
+2. Score all five actions with the ML model.
+3. Apply deterministic guardrails.
+4. Compute incremental recovery and incremental expected value.
+5. Select the best eligible action.
+6. Generate an explanation with Qwen3 4B when Ollama is available, otherwise use a deterministic fallback.
 
 ---
 
 ## How It Works
 
-For each candidate recovery action, the ML model estimates:
+For each action, the ML model estimates recovery probability from the payment features and the candidate recovery action.
 
-```text
-P(recovered = 1 | payment features, recovery action)
+The decision engine uses the no-action probability as the baseline and computes:
+
+$$\text{incremental\_recovery} = \text{action\_probability} - \text{no\_action\_baseline}$$
+
+$$\text{incremental\_expected\_value} = \text{incremental\_recovery} \times \text{payment\_amount} - \text{action\_cost}$$
+
+The current implementation also filters intervention actions using a minimum recovery probability threshold of 0.30 before selecting the best eligible option.
+
+The important distinction is:
+
+- Raw ML probability tells you how likely an action is to recover the payment.
+- The decision engine tells you whether that action is eligible and economically worthwhile.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[React Frontend] --> B[FastAPI API]
+    B --> C[Payment + Customer Context]
+    C --> D[ML Recovery Model]
+    D --> E[Deterministic Decision Engine]
+    E --> F[Guardrails + Expected Value]
+    F --> G[Final Recovery Action]
+    G --> H[AI Explanation Layer]
+    H --> I[Ollama + Qwen3 4B when available]
+    H --> J[Deterministic fallback explanation]
 ```
 
-The `no_action` probability is used as the baseline.
+The backend is authoritative for the final decision. The LLM only explains the decision and does not override it.
 
-### Incremental Recovery
+---
 
-```text
-incremental_recovery
-    = action_probability - baseline_probability
-```
+## Decision Logic
 
-### Incremental Expected Value
+The decision engine is deterministic:
 
-```text
-incremental_expected_value
-    = incremental_recovery × payment_amount - action_cost
-```
+1. Generate recovery probabilities for all five actions.
+2. Use `no_action` as the baseline.
+3. Compute incremental recovery and incremental expected value.
+4. Apply guardrails.
+5. Keep only eligible intervention actions.
+6. Select the eligible action with the highest incremental expected value.
+7. If no intervention remains, return No Action.
 
-The decision engine selects the eligible action with the highest incremental expected value.
-
-This means a high ML probability does **not** automatically result in that action being selected.
+The decision output includes the recommended action, recovery probability, baseline probability, incremental recovery, incremental expected value, action cost, and guardrail evidence.
 
 ---
 
 ## Guardrails
 
-The decision engine applies deterministic business constraints.
+The implementation currently enforces two hard constraints:
 
-### Retry Threshold
+- `attempt_number >= 3` blocks `Retry Now` and `Retry Later`
+- `failure_reason == blocked_card` blocks `Retry Now` and `Retry Later`
 
-When:
-
-```text
-attempt_number >= 3
-```
-
-`Retry Now` and `Retry Later` become ineligible.
-
-### Blocked Card
-
-When:
-
-```text
-failure_reason == blocked_card
-```
-
-retry actions become ineligible.
-
-The original ML predictions remain visible, while the guardrails determine which actions can actually be selected.
+These rules preserve the raw ML predictions, but remove ineligible retry actions from the final choice set.
 
 ---
 
 ## Machine Learning
 
-The recovery model uses a Scikit-learn pipeline:
+The model is a Scikit-learn pipeline:
 
 ```text
-Categorical Features
-        ↓
-OneHotEncoder
-        ↓
-Numerical Features
-        ↓
-StandardScaler
-        ↓
-Logistic Regression
+Categorical features -> OneHotEncoder
+Numerical features   -> StandardScaler
+Both streams         -> Logistic Regression
 ```
 
-Features include:
+### Features
 
-* Payment method
-* Failure reason
-* Bank
-* Recovery action
-* Transaction amount
-* Previous successes
-* Previous failures
-* Attempt number
-* Customer age
-* Hour
-* Day of week
+- amount
+- payment_method
+- failure_reason
+- bank
+- previous_successes
+- previous_failures
+- attempt_number
+- customer_age_days
+- hour
+- day_of_week
+- recovery_action
 
-The current dataset contains **20,000 synthetic payment transactions**.
+### Dataset
 
-### Current Evaluation
+- Source: synthetic payment recovery CSV
+- Size: 20,000 transactions
+- Split: 80% training, 20% test
 
-| Metric    |  Score |
-| --------- | -----: |
-| Accuracy  | 65.70% |
+### Model Metrics
+
+These metrics are from the synthetic dataset and are not production performance.
+
+| Metric | Score |
+| --- | ---: |
+| Accuracy | 65.70% |
 | Precision | 61.93% |
-| Recall    | 61.93% |
-| F1 Score  | 61.93% |
-| ROC-AUC   | 72.41% |
-
-These metrics are based on the synthetic dataset used by the prototype and should not be interpreted as production performance.
+| Recall | 61.93% |
+| F1 | 61.93% |
+| ROC-AUC | 72.41% |
 
 ---
 
-## AI Explanation
+## AI Explanation Layer
 
-The project uses a locally hosted **Qwen3 4B** model through Ollama.
+The explanation layer uses Qwen3 4B through Ollama when a local Ollama server is available.
 
-The LLM receives the structured evidence produced by the application:
+The application sends structured evidence to the model:
 
-* Payment details
-* Customer history
-* Failure context
-* ML predictions
-* Guardrails
-* Decision-engine results
-* Recovery metrics
+- payment facts
+- customer history
+- failure analysis
+- ML predictions
+- decision-engine output
 
-The LLM is used only for explanation.
-
-```text
-ML Model
-   ↓
-Decision Engine ← Business Guardrails
-   ↓
-Final Decision
-   ↓
-LLM Explanation
-```
-
-The LLM does not make or override the final recovery decision.
+If Ollama is unavailable, the backend returns a deterministic evidence-based explanation. This means the deployed backend does not depend on a local Ollama server.
 
 ---
 
-## Example Decisions
+## Demo Scenarios
 
-The demo includes four representative cases:
+### PAY_000001 -> Payment Link
 
-| Payment    | Decision     | Reason                             |
-| ---------- | ------------ | ---------------------------------- |
-| PAY_000001 | Payment Link | Highest eligible expected value    |
-| PAY_000002 | Retry Later  | Retry remains eligible             |
-| PAY_000008 | Payment Link | Retry actions blocked at attempt 3 |
-| PAY_000016 | No Action    | Blocked card + attempt count 4     |
+- Amount: ₹2,690.20
+- Attempt number: 4
+- Retry actions are blocked by the attempt threshold
+- Decision: Payment Link
+- Baseline probability: 36.07%
+- Incremental expected value: ₹673.60
 
-One important demonstration is `PAY_000008`:
+### PAY_000002 -> Retry Later
 
-```text
-Retry Later
-ML probability: 41.86%
-        ↓
-Retry blocked by guardrail
-        ↓
-Payment Link
-ML probability: 39.50%
-        ↓
-Final Decision
-```
+- Amount: ₹1,618.72
+- Attempt number: 2
+- Retry actions remain eligible
+- Decision: Retry Later
+- Incremental expected value: ₹424.41
 
-This demonstrates the difference between **prediction** and **decisioning**.
+### PAY_000008 -> Payment Link
+
+- Amount: ₹3,340.74
+- Attempt number: 3
+- Retry Later has the highest raw ML probability at 41.86%
+- Retry actions are blocked by the attempt-number guardrail
+- Payment Link has a recovery probability of 39.50%
+- Baseline probability is 18.97%
+- Incremental recovery is 20.53%
+- Incremental expected value is ₹684.95
+- Final decision: Payment Link
+
+This case shows the core behavior of the system: the highest raw probability is not the final decision when a retry action is ineligible.
+
+### PAY_000016 -> No Action
+
+- Amount: ₹1,153.05
+- Failure reason: blocked_card
+- Attempt number: 4
+- Retry actions are blocked by the guardrails
+- Decision: No Action
+- Incremental recovery: 0%
+- Incremental expected value: ₹0.00
 
 ---
 
 ## Tech Stack
 
-### Backend
-
-* Python
-* FastAPI
-* Uvicorn
-* Pydantic
-
-### Machine Learning
-
-* Scikit-learn
-* Pandas
-* NumPy
-* Joblib
-* Logistic Regression
-
-### AI
-
-* Ollama
-* Qwen3 4B
-
-### Frontend
-
-* React
-* Vite
-* CSS
-
-### Data
-
-* CSV
-* Synthetic payment recovery dataset
+- Backend: Python, FastAPI, Uvicorn, Pydantic
+- Machine learning: Scikit-learn, Pandas, NumPy, Joblib
+- Explanation: Ollama, Qwen3 4B
+- Frontend: React, Vite, Lucide React
+- Data source: CSV
+- Deployment: Render static site and Render web service
 
 ---
 
@@ -243,25 +240,26 @@ adaptive-payment-recovery/
 │   └── tools.py
 ├── data/
 │   └── payment_recovery_data.csv
+├── frontend/
+│   ├── index.html
+│   ├── package.json
+│   ├── vite.config.js
+│   └── src/
 ├── models/
 │   └── recovery_model.pkl
+├── notebooks/
 ├── src/
 │   ├── analyze_data.py
 │   ├── decision_engine.py
 │   ├── generate_data.py
 │   └── train_model.py
-├── frontend/
-│   └── src/
-│       ├── App.jsx
-│       ├── App.css
-│       └── ...
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## Setup
+## Local Setup
 
 ### Backend
 
@@ -269,11 +267,6 @@ adaptive-payment-recovery/
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-Start the API:
-
-```bash
 uvicorn api.main:app --reload
 ```
 
@@ -285,25 +278,28 @@ npm install
 npm run dev
 ```
 
-### Ollama
+### Optional Ollama Setup
 
-The explanation layer requires Ollama with:
-
-```text
-qwen3:4b
+```bash
+ollama pull qwen3:4b
+ollama run qwen3:4b
 ```
 
 ---
 
 ## API
 
-### Recover Payment
+### `GET /`
 
-```http
-POST /recover
-```
+Returns a simple service status payload.
 
-Request:
+### `GET /health`
+
+Returns `{"status": "healthy"}`.
+
+### `POST /recover`
+
+Request body:
 
 ```json
 {
@@ -311,61 +307,43 @@ Request:
 }
 ```
 
-The response contains:
+The response includes:
 
-* Payment information
-* Customer history
-* Failure analysis
-* ML predictions
-* Decision-engine result
-* AI explanation
+- payment
+- customer_history
+- failure_analysis
+- predictions
+- decision
+- analysis
 
-Additional endpoints:
+If the payment ID is not found, the API returns 404.
 
-```http
-GET /
-GET /health
-```
+---
+
+## Deployment
+
+- Frontend: Render Static Site
+- Backend: Render Web Service
+- Production frontend URL: https://adaptive-payment-recovery-1.onrender.com
+- The frontend uses `VITE_API_URL` to point at the production backend
+- Production backend URL: https://adaptive-payment-recovery.onrender.com
+The public deployment has been manually verified end to end.
 
 ---
 
 ## Limitations
 
-This is a prototype demonstrating the decision-engine architecture.
-
-* Training data is synthetic.
-* Model probabilities are not causal estimates.
-* The current data source is CSV.
-* The LLM requires a local Ollama installation.
-* No authentication or production infrastructure is included.
-* Model performance has not been validated on real payment data.
+- The training data is synthetic.
+- The current prototype uses CSV as its data source.
+- Model probabilities are not causal estimates.
+- The model has not been validated on real payment data.
+- There is no real payment gateway execution.
+- There is no production authentication or production monitoring stack.
+- Real recovery-outcome tracking is not present because the prototype uses synthetic payment data.
+- Ollama is optional for explanations; the backend falls back to deterministic output when it is unavailable.
 
 ---
 
-## Key Idea
+## Conclusion
 
-The system separates four responsibilities:
-
-**ML predicts.**
-
-Estimate recovery probability for each possible action.
-
-**Guardrails constrain.**
-
-Remove actions that violate business rules.
-
-**Economics decides.**
-
-Choose the eligible action with the highest incremental expected value.
-
-**AI explains.**
-
-Provide a human-readable explanation of the final decision.
-
-The result is an adaptive payment recovery system that goes beyond simply asking:
-
-> **"Which action has the highest probability?"**
-
-and instead asks:
-
-> **"Which eligible action creates the greatest incremental value?"**
+Adaptive Payment Recovery separates prediction, guardrails, economics, and explanation. That separation is the main value of the project: the model estimates recovery likelihood, the decision engine enforces business constraints, and the final action is selected by incremental value rather than raw probability alone.
