@@ -53,28 +53,24 @@ For each action, the ML model estimates recovery probability from the payment fe
 The decision engine uses the no-action probability as the baseline and computes:
 
 $$
-\text{incremental recovery}
-=
-\text{action probability}
--
-\text{no-action baseline}
+\text{Incremental Recovery} =
+\text{Action Probability} -
+\text{No-Action Baseline}
 $$
 
 $$
-\text{incremental expected value}
-=
-\text{incremental recovery}
-\times
-\text{payment amount}
--
-\text{action cost}
+\text{Incremental Expected Value} =
+\text{Incremental Recovery} \times
+\text{Payment Amount} -
+\text{Action Cost}
 $$
-The current implementation also filters intervention actions using a minimum recovery probability threshold of 0.30 before selecting the best eligible option.
+
+The current implementation also filters intervention actions using a minimum recovery probability threshold of **0.30** before selecting the best eligible option.
 
 The important distinction is:
 
-- Raw ML probability tells you how likely an action is to recover the payment.
-- The decision engine tells you whether that action is eligible and economically worthwhile.
+- **Raw ML probability** tells you how likely an action is to recover the payment.
+- **The decision engine** tells you whether that action is eligible and economically worthwhile.
 
 ---
 
